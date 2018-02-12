@@ -68,7 +68,7 @@ class TransformComponentManager extends ComponentManager {
 
 const transformComponentManager = new TransformComponentManager(100001);
 
-benchmark("add 100,000 entities", () =>{
+benchmark("add 100,000 entities", () => {
   for (var i = 0; i < 100000; i++) {
     transformComponentManager.add(i);
   }
@@ -77,15 +77,7 @@ benchmark("add 100,000 entities", () =>{
 assert(transformComponentManager.count === 100001);
 assert(transformComponentManager.instances[1].entity === 0);
 
-benchmark("remove 100,000 entities", () =>{
-  for (var i = 0; i < 100000; i++) {
-    transformComponentManager.remove(i);
-  }
-});
-
-assert(transformComponentManager.count === 1);
-
-benchmark("set 100,000 localPositions", () =>{
+benchmark("set 100,000 localPositions", () => {
   const localMatrices = transformComponentManager.properties.localMatrix;
   for (var i = 0; i < 100000; i++) {
     localMatrices[i].set([8.5, 2, 3], 12);
@@ -96,7 +88,7 @@ assert(transformComponentManager.properties.localMatrix[42][12] === 8.5);
 assert(transformComponentManager.properties.localMatrix[75][13] === 2);
 assert(transformComponentManager.properties.localMatrix[3300][14] === 3);
 
-benchmark("multiply 100,000 matrices", () =>{
+benchmark("multiply 100,000 matrices", () => {
   const localMatrices = transformComponentManager.properties.localMatrix;
   const multiply = mat4.multiply;
   const mat = mat4.create();
@@ -110,3 +102,28 @@ benchmark("multiply 100,000 matrices", () =>{
 assert(transformComponentManager.properties.localMatrix[42][12] === 9.5);
 assert(transformComponentManager.properties.localMatrix[75][13] === 4);
 assert(transformComponentManager.properties.localMatrix[3300][14] === 6);
+
+benchmark("multiply 100,000 matrices using the component classes", () => {
+  const multiply = mat4.multiply;
+  const mat = mat4.create();
+  mat4.fromTranslation(mat, new Float32Array([1, 2, 3]));
+
+  let instance;
+
+  for (var i = 0; i < 100000; i++) {
+    instance = transformComponentManager.instances[i];
+    multiply(instance.localMatrix, instance.localMatrix, mat);
+  }
+});
+
+assert(transformComponentManager.properties.localMatrix[42][12] === 10.5);
+assert(transformComponentManager.properties.localMatrix[75][13] === 6);
+assert(transformComponentManager.properties.localMatrix[3300][14] === 9);
+
+benchmark("remove 100,000 entities", () => {
+  for (var i = 0; i < 100000; i++) {
+    transformComponentManager.remove(i);
+  }
+});
+
+assert(transformComponentManager.count === 1);
