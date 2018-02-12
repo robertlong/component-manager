@@ -1,0 +1,15 @@
+{
+  "name": "component-manager",
+  "version": "0.0.1",
+  "main": "index.js",
+  "license": "MIT",
+  "author": {
+    "name": "Robert Long"
+  },
+  "scripts": {
+    "benchmark": "node ./test/benchmark.js"
+  },
+  "devDependencies": {
+    "gl-matrix": "^2.4.0"
+  }
+}
