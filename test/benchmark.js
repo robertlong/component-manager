@@ -3,10 +3,12 @@ const { mat4 } = require("gl-matrix");
 const assert = require("assert");
 
 function benchmark(description, fn) {
+  const startHeap = process.memoryUsage().heapUsed;
   const start = Date.now();
   fn();
   const elapsed = Date.now() - start;
-  console.log(`${description} took ${elapsed}ms`);
+  const totalHeapUsed = process.memoryUsage().heapUsed - startHeap;
+  console.log(`${description} took ${elapsed}ms ${totalHeapUsed} heap used`);
 }
 
 const TransformComponentManagerSchema = {
@@ -79,8 +81,9 @@ assert(transformComponentManager.instances[1].entity === 0);
 
 benchmark("set 100,000 localPositions", () => {
   const localMatrices = transformComponentManager.properties.localMatrix;
+  const position = [8.5, 2, 3];
   for (var i = 0; i < 100000; i++) {
-    localMatrices[i].set([8.5, 2, 3], 12);
+    localMatrices[i].set(position, 12);
   }
 });
 
