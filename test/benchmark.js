@@ -9,6 +9,7 @@ function benchmark(description, fn) {
   console.log(`${description} took ${elapsed}ms`);
 }
 
+// prettier-ignore
 const TransformComponentManagerSchema = {
   name: "transform",
   properties: [
@@ -66,7 +67,7 @@ class TransformComponentManager extends ComponentManager {
   }
 }
 
-const transformComponentManager = new TransformComponentManager(100001);
+const transformComponentManager = new TransformComponentManager(100000);
 
 benchmark("add 100,000 entities", () => {
   for (var i = 0; i < 100000; i++) {
@@ -74,13 +75,14 @@ benchmark("add 100,000 entities", () => {
   }
 });
 
-assert(transformComponentManager.count === 100001);
-assert(transformComponentManager.instances[1].entity === 0);
+assert(transformComponentManager.count === 100000);
+assert(transformComponentManager.instances[123].entity === 123);
 
 benchmark("set 100,000 localPositions", () => {
   const localMatrices = transformComponentManager.properties.localMatrix;
+  const position = [8.5, 2, 3];
   for (var i = 0; i < 100000; i++) {
-    localMatrices[i].set([8.5, 2, 3], 12);
+    localMatrices[i].set(position, 12);
   }
 });
 
@@ -126,4 +128,4 @@ benchmark("remove 100,000 entities", () => {
   }
 });
 
-assert(transformComponentManager.count === 1);
+assert(transformComponentManager.count === 0);

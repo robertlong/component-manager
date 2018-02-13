@@ -1,24 +1,4 @@
-const PropSizes = {
-  Int8Array: (property) => property.length,
-  Uint8Array: (property) => property.length,
-  Int16Array: (property) => property.length * 2,
-  Uint16Array: (property) => property.length * 2,
-  Int32Array: (property) => property.length * 4,
-  Uint32Array: (property) => property.length * 4,
-  Float32Array: (property) => property.length * 4,
-  Float64Array: (property) => property.length * 8,
-  Int8: () => 1,
-  Uint8: () => 1,
-  Int16: () => 2,
-  Uint16: () => 2,
-  Int32: () => 4,
-  Uint32: () => 4,
-  Float32: () => 4,
-  Float64: () => 8,
-  Entity: () => 4,
-};
-
-const PropTypedArrayConstructor = {
+const PropArrayConstructor = {
   Int8Array: Int8Array,
   Uint8Array: Uint8Array,
   Int16Array: Int16Array,
@@ -35,118 +15,101 @@ const PropTypedArrayConstructor = {
   Uint32: Uint32Array,
   Float32: Float32Array,
   Float64: Float64Array,
-  Entity: Int32Array,
+  Entity: Int32Array
 };
 
-function getPropertySize(property) {
-  return PropSizes[property.type](property);
-}
+/**
+ * Generates a component manager from the provided schema.
+ * Component data tightly packed one after another in an ArrayBuffer.
+ * componentData.properties availible for component data access as arrays.
+ * componentData.instances availible for component data access as objects.
+ */
+class ComponentManager {
+  constructor(schema, initialSize) {
+    // The total byte length of all the properties in a single component.
+    this.instanceByteLength = schema.properties.reduce((byteLength, prop) => {
+      const length = prop.length || 1;
+      const arrayConstructor = PropArrayConstructor[prop.type];
+      return byteLength + arrayConstructor.BYTES_PER_ELEMENT * length;
+    }, 0);
 
-function getInstanceByteLength(schema) {
-  return schema.properties.reduce((v, p) => v += getPropertySize(p), 0);
-}
+    // The ArrayBuffer where all component data is stored.
+    this.buffer = new ArrayBuffer(initialSize * this.instanceByteLength);
 
-function createPropertyTypedArrays(schema, buffer, initialSize, instanceByteLength) {
-  const properties = {};
-  let offset = 0;
+    // Used to copy component data.
+    this.byteView = new Uint8Array(this.buffer);
 
-  for (let property of schema.properties) {
-    const ArrayConstructor = PropTypedArrayConstructor[property.type];
-    const length = property.length === undefined ? 1 : property.length;
+    // The ArrayBuffer where all default component data is stored.
+    this.defaultBuffer = new ArrayBuffer(this.instanceByteLength);
 
-    if (property.type === "Entity") {
-      properties.entity = Array.from({ length: initialSize }, (_, i) => {
-        return new ArrayConstructor(buffer, (instanceByteLength * i) + offset, length);
-      });
-    } else if (property.name !== undefined) {
-      properties[property.name] = Array.from({ length: initialSize }, (_, i) => {
-        return new ArrayConstructor(buffer, (instanceByteLength * i) + offset, length);
-      });
-    } else {
-      throw new Error(`Property name not set im ${schema.name}.`);
+    // Used to copy default component data.
+    this.defaultBufferView = new Uint8Array(this.defaultBuffer);
+
+    // The current number of active components in the manager.
+    this.count = 0;
+
+    // The total number of components that can be stored before expanding the buffer.
+    this.capacity = initialSize;
+
+    // Stores arrays of TypedArrays for accessing each property. The keys are property names.
+    this.properties = {};
+
+    // Used to lookup entity indices into the property arrays.
+    this.entityIndices = new Map();
+
+    // Class constructor for an instance of a component.
+    function ComponentInstance(manager, index) {
+      this.manager = manager;
+      this._index = index;
     }
 
-    offset += getPropertySize(property);
-  }
+    let propOffset = 0;
 
-  return properties;
-}
+    for (let property of schema.properties) {
+      const propertyType = property.type;
+      const propertyName = propertyType === "Entity" ? "entity" : property.name;
+      const ArrayConstructor = PropArrayConstructor[propertyType];
+      const length = property.length || 1;
+      const defaultValue = property.default;
 
-function setPropertyDefaults(schema, properties) {
-  for (let property of schema.properties) {
-    switch(property.type) {
-      case "Int8Array":
-      case "Uint8Array":
-      case "Int16Array":
-      case "Uint16Array":
-      case "Int32Array":
-      case "Uint32Array":
-      case "Float32Array":
-      case "Float64Array":
-        if (property.default !== undefined) {
-          properties[property.name][0].set(property.default);
-        }
-        break;
-      case "Int8":
-      case "Uint8":
-      case "Int16":
-      case "Uint16":
-      case "Int32":
-      case "Uint32":
-      case "Float32":
-      case "Float64":
-        if (property.default !== undefined) {
-          properties[property.name][0][0] = property.default;
-        }
-        break;
-      case "Entity":
-        properties.entity[0] = -1;
-        break;
-      default:
-        throw new Error(`Undefined property type: ${property.type}`);
-    }      
-  }
-}
+      // Initialize a TypedArrayView for each component for the current property.
+      const propertyTypedArray = Array.from({ length: initialSize }, (_, i) => {
+        return new ArrayConstructor(this.buffer, this.instanceByteLength * i + propOffset, length);
+      });
 
-function createComponentInstanceClass(schema, propertyTypedArrays) {
-  function ComponentInstance(manager, index) {
-    this.manager = manager;
-    this._index = index;
-  }
+      this.properties[propertyName] = propertyTypedArray;
 
-  for (let property of schema.properties) {
-    let propertyTypedArray;
+      if (propertyType === "Entity") {
+        // Set default entity value to -1 (uninitalized).
+        new ArrayConstructor(this.defaultBuffer, propOffset, length)[0] = -1;
 
-    switch(property.type) {
-      case "Int8Array":
-      case "Uint8Array":
-      case "Int16Array":
-      case "Uint16Array":
-      case "Int32Array":
-      case "Uint32Array":
-      case "Float32Array":
-      case "Float64Array":
-        propertyTypedArray = propertyTypedArrays[property.name];
-        Object.defineProperty(ComponentInstance.prototype, property.name, {
+        // Set array value property type getter (entity cannot be set on instance class).
+        Object.defineProperty(ComponentInstance.prototype, propertyName, {
+          enumerable: true,
+          get() {
+            return propertyTypedArray[this._index][0];
+          }
+        });
+      } else if (property.length !== undefined && defaultValue !== undefined) {
+        // Set the default property value.
+        new ArrayConstructor(this.defaultBuffer, propOffset, length).set(defaultValue);
+
+        // Set array value property type getter and setter.
+        Object.defineProperty(ComponentInstance.prototype, propertyName, {
           enumerable: true,
           get() {
             return propertyTypedArray[this._index];
           },
-          set(value) {
+          set() {
             propertyTypedArray[this._index].set(value);
           }
         });
-        break;
-      case "Int8":
-      case "Uint8":
-      case "Int16":
-      case "Uint16":
-      case "Int32":
-      case "Uint32":
-      case "Float32":
-      case "Float64":
-        propertyTypedArray = propertyTypedArrays[property.name];
-        Object.defineProperty(ComponentInstance.prototype, property.name, {
+      } else if (defaultValue !== undefined) {
+        // Set the default property value.
+        new ArrayConstructor(this.defaultBuffer, propOffset, length)[0] = defaultValue;
+
+        // Set single value property type getter and setter.
+        Object.defineProperty(ComponentInstance.prototype, propertyName, {
           enumerable: true,
           get() {
             return propertyTypedArray[this._index][0];
@@ -155,55 +118,44 @@ function createComponentInstanceClass(schema, propertyTypedArrays) {
             propertyTypedArray[this._index][0] = value;
           }
         });
-        break;
-      case "Entity":
-        propertyTypedArray = propertyTypedArrays.entity;
-        Object.defineProperty(ComponentInstance.prototype, "entity", {
-          enumerable: true,
-          get() {
-            return propertyTypedArray[this._index][0];
-          }
-        });
-        break;
-      default:
-        throw new Error(`Undefined property type: ${property.type}`);
-    }      
+      }
+
+      propOffset += ArrayConstructor.BYTES_PER_ELEMENT * length;
+    }
+
+    // Don't use the ComponentInstance constructor directly. Only use for checking instanceOf.
+    this.ComponentInstance = ComponentInstance;
+
+    // Array of component instances. Use entityIndices map to get index.
+    this.instances = Array.from({ length: initialSize }, (_, i) => {
+      return new ComponentInstance(this, i);
+    });
   }
 
-  return ComponentInstance;
-}
-
-class ComponentManager {
-  constructor(schema, initialSize) {
-    this.instanceByteLength = getInstanceByteLength(schema);
-    this.buffer = new ArrayBuffer(initialSize * this.instanceByteLength);
-    this.properties = createPropertyTypedArrays(schema, this.buffer, initialSize, this.instanceByteLength);
-    const ComponentInstanceClass = createComponentInstanceClass(schema, this.properties);
-    this.ComponentInstanceClass = ComponentInstanceClass;
-    this.instances = Array.from({ length: initialSize }, (_, i) => new ComponentInstanceClass(this, i));
-    this.entityIndices = new Map();
-    this.bufferByteView = new Uint8Array(this.buffer);
-    setPropertyDefaults(schema, this.properties);
-    this.defaultBufferView = this.bufferByteView.subarray(0, this.instanceByteLength);
-    this.count = 1;
-    this.capacity = initialSize;
-  }
-
+  /**
+   * Adds a component to the specified entity.
+   * @param {number} entityId - The id of the entity add.
+   * @returns {ComponentInstance} The component instance for the added component.
+   */
   add(entityId) {
     if (this.count === this.capacity) {
-      throw new Error(`${this.constructor.name} capacity reached. Expansion unimplemented.`)
+      throw new Error(`${this.constructor.name} capacity reached. Expansion unimplemented.`);
     }
 
     const index = this.count++;
     const byteOffset = index * this.instanceByteLength;
     this.entityIndices[entityId] = index;
-    // TODO: Why is .copyWithin so much slower than this?
-    this.bufferByteView.set(this.defaultBufferView, byteOffset);
+    this.byteView.set(this.defaultBufferView, byteOffset);
     this.properties.entity[index][0] = entityId;
 
     return this.instances[index];
   }
 
+  /**
+   * Removes a component from the specified entity.
+   * @param {number} entityId - The id of the entity to remove.
+   * @returns {boolean} Returns true if removed and false if it didn't exist.
+   */
   remove(entityId) {
     const index = this.entityIndices[entityId];
 
@@ -215,7 +167,7 @@ class ComponentManager {
 
     const lastIndex = this.count - 1;
 
-    if (this.count > 2 && index !== lastIndex) {
+    if (this.count > 1 && index !== lastIndex) {
       const instance = this.instances[index];
       const replacementInstance = this.instances[lastIndex];
 
@@ -228,9 +180,13 @@ class ComponentManager {
       const replacementEntity = this.properties.entity[lastIndex][0];
       this.entityIndices[replacementEntity] = index;
 
-      const byteOffset = index * this.instanceByteLength;
-      const replacementOffset = lastIndex * this.instanceByteLength;
-      this.bufferByteView.set(this.defaultBufferView.subarray(replacementOffset, replacementOffset + this.instanceByteLength), byteOffset);
+      const instanceByteLength = this.instanceByteLength;
+      const byteOffset = index * instanceByteLength;
+      const replacementOffset = lastIndex * instanceByteLength;
+      this.byteView.set(
+        this.byteView.subarray(replacementOffset, replacementOffset + instanceByteLength),
+        byteOffset
+      );
     }
 
     this.count--;
